@@ -26,6 +26,11 @@ RUN apk upgrade --no-cache && \
 # Set environment for CGO-enabled build (required for go-sqlite3)
 ENV CGO_ENABLED=1 GOOS=linux
 
+# GOPROXY: optional build arg to override the Go module proxy
+# Pass --build-arg GOPROXY=direct to bypass blocking proxies or --build-arg GOPROXY=<your-proxy>
+ARG GOPROXY
+ENV GOPROXY=$GOPROXY
+
 # Copy all local modules
 COPY core/ ./core/
 COPY framework/ ./framework/

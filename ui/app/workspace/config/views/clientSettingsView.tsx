@@ -398,7 +398,6 @@ export default function ClientSettingsView() {
 					disabled={!hasSettingsUpdateAccess}
 					data-testid="client-settings-models-cache-ttl-input"
 				/>
-				</div>
 			</div>
 
 			<UserAgentMappingsView disabled={isLoading || !hasSettingsUpdateAccess} />
