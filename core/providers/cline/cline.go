@@ -6,7 +6,12 @@ package cline
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/maximhq/bifrost/core/providers/openai"
@@ -15,18 +20,53 @@ import (
 	"github.com/valyala/fasthttp"
 )
 
-// ClineProvider implements the Provider interface for Cline's API.
-type ClineProvider struct {
-	logger              schemas.Logger        // Logger for provider operations
-	client              *fasthttp.Client      // HTTP client for unary API requests (ReadTimeout bounds overall response)
-	streamingClient     *fasthttp.Client      // HTTP client for streaming API requests (no ReadTimeout; idle governed by NewIdleTimeoutReader)
-	networkConfig       schemas.NetworkConfig // Network configuration including extra headers
-	sendBackRawRequest  bool                  // Whether to include raw request in BifrostResponse
-	sendBackRawResponse bool                  // Whether to include raw response in BifrostResponse
-	isKeyLess           bool                  // Whether the provider operates in free mode (no API key required)
+// recommendedModelsPathSuffix is the upstream path (under the same base path
+// as /v1) that lists the ClinePass recommended models.
+const recommendedModelsPathSuffix = "/ai/cline/recommended-models"
+
+// modelsCacheTTL bounds how often the recommended-models document is
+// re-fetched; within the TTL the cached copy is served as-is.
+const modelsCacheTTL = 5 * time.Minute
+
+// fetchTimeout bounds a single upstream fetch of the document.
+const fetchTimeout = 5 * time.Second
+
+// recModel is one entry of the recommended-models document.
+type recModel struct {
+	ID          string   `json:"id"`
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	Tags        []string `json:"tags"`
 }
 
-// NewClineProvider creates a new Cline provider instance.
+// recommendedResp is the shape of the Cline recommended-models document.
+type recommendedResp struct {
+	Recommended []recModel `json:"recommended"`
+	Free        []recModel `json:"free"`
+	ClinePass   []recModel `json:"clinePass"`
+	ClineCloud  []recModel `json:"clineCloud"`
+}
+
+// modelsCache holds a cached model list with its fetch timestamp.
+type modelsCache struct {
+	mu      sync.Mutex
+	models  []schemas.Model
+	fetched time.Time
+}
+
+// ClineProvider implements the Provider interface for Cline API.
+type ClineProvider struct {
+	logger              schemas.Logger
+	client              *fasthttp.Client
+	streamingClient     *fasthttp.Client
+	networkConfig       schemas.NetworkConfig
+	sendBackRawRequest  bool
+	sendBackRawResponse bool
+	isKeyLess           bool
+
+	modelsCache modelsCache // TTL-cached model list
+}
+
 // It initializes the HTTP client with the provided configuration.
 func NewClineProvider(config *schemas.ProviderConfig, logger schemas.Logger) (*ClineProvider, error) {
 	config.CheckAndSetDefaults()
@@ -73,26 +113,170 @@ func NewClineProvider(config *schemas.ProviderConfig, logger schemas.Logger) (*C
 	}, nil
 }
 
-// GetProviderKey returns the provider identifier for Cline.
 func (provider *ClineProvider) GetProviderKey() schemas.ModelProvider {
 	return schemas.ClinePass
 }
 
-// ListModels performs a list models request to Cline's API.
-func (provider *ClineProvider) ListModels(ctx *schemas.BifrostContext, keys []schemas.Key, request *schemas.BifrostListModelsRequest) (*schemas.BifrostListModelsResponse, *schemas.BifrostError) {
-	return openai.HandleOpenAIListModelsRequest(
-		ctx,
-		provider.client,
-		request,
-		provider.networkConfig.BaseURL+providerUtils.GetPathFromContext(ctx, "/v1/models"),
-		keys,
-		provider.networkConfig.ExtraHeaders,
-		provider.GetProviderKey(),
-		providerUtils.ShouldSendBackRawRequest(ctx, provider.sendBackRawRequest),
-		providerUtils.ShouldSendBackRawResponse(ctx, provider.sendBackRawResponse),
-	)
+
+// recommendedURL builds the recommended-models document URL from the
+// provider base URL: strips the last path segment (e.g. /v1) and
+// replaces it with /ai/cline/recommended-models.
+func (provider *ClineProvider) recommendedURL() string {
+	base := strings.TrimRight(provider.networkConfig.BaseURL, "/")
+	if lastSlash := strings.LastIndex(base, "/"); lastSlash > 0 {
+		base = base[:lastSlash]
+	}
+	return strings.TrimRight(base, "/") + recommendedModelsPathSuffix
 }
 
+// fetchRecommendedModels fetches the recommended-models document from
+// Cline API, injecting the first available API key as a bearer token.
+func (provider *ClineProvider) fetchRecommendedModels(keys []schemas.Key) ([]byte, error) {
+	docURL := provider.recommendedURL()
+
+	httpClient := &http.Client{Timeout: fetchTimeout}
+	ctx, cancel := context.WithTimeout(context.Background(), fetchTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, docURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("building recommended-models request: %w", err)
+	}
+
+	// Inject Authorization header from the first available key
+	for _, key := range keys {
+		if key.Value.GetValue() != "" {
+			req.Header.Set("Authorization", "Bearer "+key.Value.GetValue())
+			break
+		}
+	}
+
+	// Add extra headers from configuration
+	for k, v := range provider.networkConfig.ExtraHeaders {
+		req.Header.Set(k, v)
+	}
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("recommended-models fetch: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("recommended-models: upstream status %s", resp.Status)
+	}
+
+	return io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+}
+
+// mergeModels parses a recommended-models document and merges the free
+// and clinePass sub-lists (in that order, deduplicated by id) into
+// Bifrost Model entries, setting the owned_by field to the id namespace.
+func mergeModels(doc []byte) []schemas.Model {
+	var parsed recommendedResp
+	if err := json.Unmarshal(doc, &parsed); err != nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	var out []schemas.Model
+	appendList := func(list []recModel) {
+		for _, m := range list {
+			if m.ID == "" || seen[m.ID] {
+				continue
+			}
+			seen[m.ID] = true
+			ownedBy := ""
+			if i := strings.Index(m.ID, "/"); i > 0 {
+				ownedBy = m.ID[:i]
+			}
+			entry := schemas.Model{
+				ID:      m.ID,
+				Name:    &m.Name,
+				OwnedBy: &ownedBy,
+			}
+			if m.Description != "" {
+				entry.Description = &m.Description
+			}
+			out = append(out, entry)
+		}
+	}
+	appendList(parsed.Free)
+	appendList(parsed.ClinePass)
+	return out
+}
+
+// loadModelsFromCache returns the cached model list if it is fresh
+// (within modelsCacheTTL). Returns nil when the cache is empty or stale.
+func (provider *ClineProvider) loadModelsFromCache() []schemas.Model {
+	provider.modelsCache.mu.Lock()
+	defer provider.modelsCache.mu.Unlock()
+	if provider.modelsCache.models != nil && time.Since(provider.modelsCache.fetched) < modelsCacheTTL {
+		return provider.modelsCache.models
+	}
+	return nil
+}
+
+// storeModelsInCache replaces the cached model list and records the fetch timestamp.
+func (provider *ClineProvider) storeModelsInCache(models []schemas.Model) {
+	provider.modelsCache.mu.Lock()
+	provider.modelsCache.models = models
+	provider.modelsCache.fetched = time.Now()
+	provider.modelsCache.mu.Unlock()
+}
+
+// loadStaleModels returns the cached model list regardless of age,
+// for use as a fallback when the upstream fetch fails.
+func (provider *ClineProvider) loadStaleModels() []schemas.Model {
+	provider.modelsCache.mu.Lock()
+	defer provider.modelsCache.mu.Unlock()
+	return provider.modelsCache.models
+}
+
+// ListModels performs a list models request against Cline recommended-models
+// API instead of the standard OpenAI /v1/models endpoint. The response
+// merges the free and clinePass sub-lists (free first, deduplicated by id).
+// Results are cached with a 5-minute TTL; stale cache is served when the
+// upstream is unreachable.
+func (provider *ClineProvider) ListModels(ctx *schemas.BifrostContext, keys []schemas.Key, request *schemas.BifrostListModelsRequest) (*schemas.BifrostListModelsResponse, *schemas.BifrostError) {
+	listFunc := func() (*schemas.BifrostListModelsResponse, *schemas.BifrostError) {
+		// Fast path: return fresh cached models
+		if models := provider.loadModelsFromCache(); models != nil {
+			return &schemas.BifrostListModelsResponse{Data: models}, nil
+		}
+
+		// Fetch the recommended-models document from Cline API
+		doc, err := provider.fetchRecommendedModels(keys)
+		if err != nil {
+			// If fetch fails but stale cache exists, serve it
+			if stale := provider.loadStaleModels(); stale != nil {
+				provider.logger.Warn("recommended-models fetch failed; serving stale cache")
+				return &schemas.BifrostListModelsResponse{Data: stale}, nil
+			}
+			return nil, providerUtils.NewBifrostOperationError(
+				"failed to fetch recommended models: "+err.Error(), nil)
+		}
+
+		// Parse and merge free + clinePass lists
+		models := mergeModels(doc)
+		if models == nil {
+			if stale := provider.loadStaleModels(); stale != nil {
+				provider.logger.Warn("recommended-models document unusable; serving stale cache")
+				return &schemas.BifrostListModelsResponse{Data: stale}, nil
+			}
+			return nil, providerUtils.NewBifrostOperationError(
+				"failed to parse recommended-models document", nil)
+		}
+
+		// Update the cache and return
+		provider.storeModelsInCache(models)
+		return &schemas.BifrostListModelsResponse{Data: models}, nil
+	}
+
+	if provider.isKeyLess {
+		return providerUtils.HandleKeylessListModelsRequest(provider.GetProviderKey(), listFunc)
+	}
+	return listFunc()
+}
 // TextCompletion is not supported by the Cline provider.
 func (provider *ClineProvider) TextCompletion(ctx *schemas.BifrostContext, key schemas.Key, request *schemas.BifrostTextCompletionRequest) (*schemas.BifrostTextCompletionResponse, *schemas.BifrostError) {
 	return nil, providerUtils.NewUnsupportedOperationError("text completion", provider.GetProviderKey())
@@ -385,3 +569,4 @@ func (provider *ClineProvider) Passthrough(_ *schemas.BifrostContext, _ schemas.
 func (provider *ClineProvider) PassthroughStream(_ *schemas.BifrostContext, _ schemas.PostHookRunner, _ func(context.Context), _ schemas.Key, _ *schemas.BifrostPassthroughRequest) (chan *schemas.BifrostStreamChunk, *schemas.BifrostError) {
 	return nil, providerUtils.NewUnsupportedOperationError(schemas.PassthroughStreamRequest, provider.GetProviderKey())
 }
+
