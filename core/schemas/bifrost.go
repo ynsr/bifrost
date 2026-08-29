@@ -74,6 +74,7 @@ const (
 	Runway        ModelProvider = "runway"
 	Runware       ModelProvider = "runware"
 	Fireworks     ModelProvider = "fireworks"
+	ClinePass     ModelProvider = "cline-pass"
 	Sarvam        ModelProvider = "sarvam"
 	Wafer         ModelProvider = "wafer"
 	GithubCopilot ModelProvider = "github-copilot"
@@ -123,6 +124,7 @@ var StandardProviders = []ModelProvider{
 	Runway,
 	Runware,
 	Fireworks,
+	ClinePass,
 	Sarvam,
 	Wafer,
 	GithubCopilot,
