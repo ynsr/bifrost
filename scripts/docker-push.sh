@@ -179,6 +179,24 @@ if [[ "$PUSH_IMAGE" == "false" ]]; then
 fi
 
 echo "📤 Pushing to Docker Hub..."
+
+# Pre-push DNS check: Docker daemon inherits /etc/resolv.conf from the host and
+# often points at 127.0.0.53 (systemd-resolved), which may not reach upstream
+# through a proxy tunnel. Verify before the push so the error message is helpful.
+if ! getent hosts registry-1.docker.io >/dev/null 2>&1; then
+    echo "⚠️  Cannot resolve registry-1.docker.io (DNS is broken inside Docker)."
+    echo "   This usually means Docker daemon uses a local DNS stub resolver"
+    echo "   that cannot reach the internet through your proxy/VPN setup."
+    echo ""
+    echo "   Fix: configure explicit upstream DNS for the Docker daemon:"
+    echo '    sudo mkdir -p /etc/docker'
+    echo "    echo '{\"dns\":[\"1.1.1.1\",\"8.8.8.8\"]}' | sudo tee /etc/docker/daemon.json"
+    echo "    sudo systemctl restart docker"
+    echo ""
+    echo "   (The build still succeeded—use --skip-push next time to skip push.)"
+    exit 1
+fi
+
 for tag in "${TAGS[@]}"; do
     echo "   Pushing $tag..."
     docker push "$tag"
