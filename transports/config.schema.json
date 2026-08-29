@@ -620,6 +620,9 @@
           "$ref": "#/$defs/provider"
         },
         "deepseek": {
+		"cline-pass": {
+			"$ref": "#/\$defs/provider"
+		},
           "$ref": "#/$defs/provider_with_deepseek_config"
         },
         "wafer": {
@@ -4132,6 +4135,7 @@
                         "groq",
                         "ollama",
                         "openrouter",
+		"cline-pass",
                         "vertex",
                         "cerebras",
                         "deepseek",
@@ -11922,6 +11926,7 @@
             "opencode-go",
             "opencode-zen",
             "sgl",
+	"cline-pass",
             "parasail",
             "perplexity",
             "cerebras",

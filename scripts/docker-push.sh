@@ -129,21 +129,42 @@ fi
 # Pass HTTP_PROXY/HTTPS_PROXY/NO_PROXY build-args if set (from host environment)
 # Auto-rewrite 127.0.0.1 and localhost to host.docker.internal so they reach
 # the host's proxy services inside the build container.
+#
+# If HTTP_PROXY is not set in the environment but xray SOCKS5 proxy is
+# detected on the default port, auto-set it (xray also speaks HTTP CONNECT
+# on the same port, so it works as an HTTPS proxy for Go module downloads).
+auto_proxy=""
+if [[ -z "${HTTP_PROXY:-}" && -z "${HTTPS_PROXY:-}" ]]; then
+    if timeout 1 bash -c '</dev/tcp/127.0.0.1/10808' 2>/dev/null; then
+        auto_proxy="http://host.docker.internal:10808"
+        echo "🔗  Auto-set HTTP_PROXY/HTTPS_PROXY=$auto_proxy (detected xray proxy)"
+    fi
+fi
+
 for proxy_var in HTTP_PROXY HTTPS_PROXY http_proxy https_proxy; do
     if [[ -n "${!proxy_var:-}" ]]; then
         raw_value="${!proxy_var}"
-        # Rewrite loopback addresses so they reach the host inside Docker
-        if [[ "$raw_value" == *"127.0.0.1"* ]] || [[ "$raw_value" == *"localhost"* ]]; then
-            cooked="${raw_value//127.0.0.1/host.docker.internal}"
-            cooked="${cooked//localhost/host.docker.internal}"
-            echo "🔗  Forwarding $proxy_var (rewritten: $cooked)"
-            BUILD_ARGS+=(--build-arg "$proxy_var=$cooked")
-        else
-            echo "🔗  Forwarding $proxy_var=$raw_value"
-            BUILD_ARGS+=(--build-arg "$proxy_var=$raw_value")
-        fi
+    elif [[ -n "$auto_proxy" ]]; then
+        raw_value="$auto_proxy"
+    else
+        continue
+    fi
+    # Rewrite loopback addresses so they reach the host inside Docker
+    if [[ "$raw_value" == *"127.0.0.1"* ]] || [[ "$raw_value" == *"localhost"* ]]; then
+        cooked="${raw_value//127.0.0.1/host.docker.internal}"
+        cooked="${cooked//localhost/host.docker.internal}"
+        echo "🔗  Forwarding $proxy_var (rewritten: $cooked)"
+        BUILD_ARGS+=(--build-arg "$proxy_var=$cooked")
+    else
+        echo "🔗  Forwarding $proxy_var=$raw_value"
+        BUILD_ARGS+=(--build-arg "$proxy_var=$raw_value")
     fi
 done
+
+# When using auto-detected proxy, let Go use the default module proxy
+# (https://proxy.golang.org,direct) through the HTTP proxy tunnel.
+# The HTTP CONNECT proxy handles DNS resolution for proxy.golang.org,
+# so we don't need to set GOPROXY=direct (and alpine has no git binary).
 # NO_PROXY entries (localhost, loopback ranges, etc.) are safe as-is and
 # don't need rewriting — they mean "don't proxy these destinations".
 for proxy_var in NO_PROXY no_proxy; do
@@ -260,17 +281,33 @@ resolve_docker_registry() {
         return 1
     fi
 
-    # Atomically rewrite our marker-commented lines in /etc/hosts.
-    # Strategy: read /etc/hosts, REMOVE lines ending with the marker comment,
-    # APPEND the fresh entries, write back. Non-marker lines are never touched
-    # so previously-staged entries that are still valid persist.
+    # Atomically update marker-commented lines in /etc/hosts.
+    # For each domain we just resolved, remove its old marker line(s),
+    # then append the fresh entry. Other marker lines (from previous
+    # runs where the IP is still valid) are preserved.
     local new_hosts
     new_hosts=$(mktemp)
-    sed '/# docker-push.sh auto-entry$/d' /etc/hosts 2>/dev/null > "$new_hosts" || true
+    cp /etc/hosts "$new_hosts" 2>/dev/null || : > "$new_hosts"
+    for domain in "${need_resolve[@]}"; do
+        sed -i "/^.* $domain # docker-push.sh auto-entry$/d" "$new_hosts"
+    done
     printf '%s' "$pending_update" >> "$new_hosts"
 
     if sudo tee /etc/hosts < "$new_hosts" >/dev/null 2>&1; then
         echo "   ✅ Added/resolved $resolved domain(s) in /etc/hosts"
+        # Docker daemon caches /etc/hosts at startup and does not re-read
+        # it on changes. Restart Docker so the Go resolver picks up the
+        # new entries before we push.
+        echo "   🔄 Restarting Docker daemon to pick up /etc/hosts changes..."
+        if sudo systemctl restart docker >/dev/null 2>&1; then
+            echo "   ✅ Docker restart complete"
+        else
+            echo "   ⚠️  Could not restart Docker automatically."
+            echo "   💡  Run: sudo systemctl restart docker"
+            echo "   Then re-run ./scripts/docker-push.sh to push."
+            rm -f "$new_hosts"
+            return 1
+        fi
     else
         echo "   ⚠️  Could not update /etc/hosts (sudo required)."
         echo "   Run this manually, then re-run:"

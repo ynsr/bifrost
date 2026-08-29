@@ -8,8 +8,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -90,7 +88,7 @@ func NewClineProvider(config *schemas.ProviderConfig, logger schemas.Logger) (*C
 
 	// Set default BaseURL if not provided
 	if config.NetworkConfig.BaseURL == "" {
-		config.NetworkConfig.BaseURL = "https://api.cline.sh/v1"
+		config.NetworkConfig.BaseURL = "https://api.cline.bot/api"
 	}
 	config.NetworkConfig.BaseURL = strings.TrimRight(config.NetworkConfig.BaseURL, "/")
 
@@ -118,30 +116,23 @@ func (provider *ClineProvider) GetProviderKey() schemas.ModelProvider {
 }
 
 
-// recommendedURL builds the recommended-models document URL from the
-// provider base URL: strips the last path segment (e.g. /v1) and
-// replaces it with /ai/cline/recommended-models.
+// recommendedURL builds the recommended-models document URL by appending
+// the path directly to the base URL (which already includes any API prefix).
 func (provider *ClineProvider) recommendedURL() string {
-	base := strings.TrimRight(provider.networkConfig.BaseURL, "/")
-	if lastSlash := strings.LastIndex(base, "/"); lastSlash > 0 {
-		base = base[:lastSlash]
-	}
-	return strings.TrimRight(base, "/") + recommendedModelsPathSuffix
+	return strings.TrimRight(provider.networkConfig.BaseURL, "/") + "/v1/ai/cline/recommended-models"
 }
 
 // fetchRecommendedModels fetches the recommended-models document from
 // Cline API, injecting the first available API key as a bearer token.
+// Uses the provider's pre-configured fasthttp client (which respects
+// proxy_config, TLS settings, and SOCKS5 forwarding).
 func (provider *ClineProvider) fetchRecommendedModels(keys []schemas.Key) ([]byte, error) {
 	docURL := provider.recommendedURL()
 
-	httpClient := &http.Client{Timeout: fetchTimeout}
-	ctx, cancel := context.WithTimeout(context.Background(), fetchTimeout)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, docURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("building recommended-models request: %w", err)
-	}
+	req := fasthttp.AcquireRequest()
+	defer fasthttp.ReleaseRequest(req)
+	req.SetRequestURI(docURL)
+	req.Header.SetMethod("GET")
 
 	// Inject Authorization header from the first available key
 	for _, key := range keys {
@@ -156,17 +147,24 @@ func (provider *ClineProvider) fetchRecommendedModels(keys []schemas.Key) ([]byt
 		req.Header.Set(k, v)
 	}
 
-	resp, err := httpClient.Do(req)
-	if err != nil {
+	resp := fasthttp.AcquireResponse()
+	defer fasthttp.ReleaseResponse(resp)
+
+	if err := provider.client.DoTimeout(req, resp, fetchTimeout); err != nil {
 		return nil, fmt.Errorf("recommended-models fetch: %w", err)
 	}
-	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("recommended-models: upstream status %s", resp.Status)
+	if resp.StatusCode() != fasthttp.StatusOK {
+		return nil, fmt.Errorf("recommended-models: upstream status %d", resp.StatusCode())
 	}
 
-	return io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	body := resp.Body()
+	if len(body) > 4<<20 {
+		body = body[:4<<20]
+	}
+	out := make([]byte, len(body))
+	copy(out, body)
+	return out, nil
 }
 
 // mergeModels parses a recommended-models document and merges the free

@@ -56,8 +56,8 @@ def dns_server(upstream: str, proxy_host: str, proxy_port: int, listen_port: int
     """
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    sock.bind(('127.0.0.1', listen_port))
-    print(f"[dns2socks5] Listening on 127.0.0.1:{listen_port}")
+    sock.bind(('0.0.0.0', listen_port))
+    print(f"[dns2socks5] Listening on 0.0.0.0:{listen_port}")
     print(f"[dns2socks5] Upstream: {upstream}:53 via SOCKS5 {proxy_host}:{proxy_port}")
     sys.stdout.flush()
 
