@@ -169,7 +169,10 @@ func (provider *ClineProvider) fetchRecommendedModels(keys []schemas.Key) ([]byt
 
 // mergeModels parses a recommended-models document and merges the free
 // and clinePass sub-lists (in that order, deduplicated by id) into
-// Bifrost Model entries, setting the owned_by field to the id namespace.
+// Bifrost Model entries, prepending the "cline-pass/" prefix to each
+// model ID. This ensures ParseModelString strips "cline-pass/" and
+// leaves the upstream modelType/model format (e.g.
+// "deepseek/deepseek-v4-flash") that the Cline API expects.
 func mergeModels(doc []byte) []schemas.Model {
 	var parsed recommendedResp
 	if err := json.Unmarshal(doc, &parsed); err != nil {
@@ -183,12 +186,10 @@ func mergeModels(doc []byte) []schemas.Model {
 				continue
 			}
 			seen[m.ID] = true
-			ownedBy := ""
-			if i := strings.Index(m.ID, "/"); i > 0 {
-				ownedBy = m.ID[:i]
-			}
+			prefixedID := "cline-pass/" + m.ID
+			ownedBy := "cline-pass"
 			entry := schemas.Model{
-				ID:      m.ID,
+				ID:      prefixedID,
 				Name:    &m.Name,
 				OwnedBy: &ownedBy,
 			}
@@ -285,8 +286,35 @@ func (provider *ClineProvider) TextCompletionStream(ctx *schemas.BifrostContext,
 	return nil, providerUtils.NewUnsupportedOperationError(schemas.TextCompletionStreamRequest, provider.GetProviderKey())
 }
 
+// resolveModelID looks up the full recommended-models document ID (e.g.
+// "deepseek/deepseek-v4-flash") for a bare model name (e.g.
+// "deepseek-v4-flash"). This handles backward compat with model slugs
+// that were stored without the "modelType/" prefix before the cache was
+// updated. Returns the bare name unchanged when no match is found, so
+// requests are never silently dropped.
+func (provider *ClineProvider) resolveModelID(bareModel string) string {
+	models := provider.loadStaleModels()
+	if models == nil {
+		return bareModel
+	}
+	prefix := "cline-pass/"
+	for _, m := range models {
+		if !strings.HasPrefix(m.ID, prefix) {
+			continue
+		}
+		upstreamID := m.ID[len(prefix):] // e.g. "deepseek/deepseek-v4-flash"
+		if i := strings.LastIndex(upstreamID, "/"); i >= 0 && upstreamID[i+1:] == bareModel {
+			return upstreamID
+		}
+	}
+	return bareModel
+}
+
 // ChatCompletion performs a chat completion request to Cline's API.
 func (provider *ClineProvider) ChatCompletion(ctx *schemas.BifrostContext, key schemas.Key, request *schemas.BifrostChatRequest) (*schemas.BifrostChatResponse, *schemas.BifrostError) {
+	// Resolve bare model name to full model ID (e.g. "deepseek-v4-flash" → "deepseek/deepseek-v4-flash")
+	// so the upstream Cline API receives the modelType/model format it expects.
+	request.Model = provider.resolveModelID(request.Model)
 	return openai.HandleOpenAIChatCompletionRequest(
 		ctx,
 		provider.client,
@@ -306,6 +334,7 @@ func (provider *ClineProvider) ChatCompletion(ctx *schemas.BifrostContext, key s
 
 // ChatCompletionStream performs a streaming chat completion request to the Cline API.
 func (provider *ClineProvider) ChatCompletionStream(ctx *schemas.BifrostContext, postHookRunner schemas.PostHookRunner, postHookSpanFinalizer func(context.Context), key schemas.Key, request *schemas.BifrostChatRequest) (chan *schemas.BifrostStreamChunk, *schemas.BifrostError) {
+	request.Model = provider.resolveModelID(request.Model)
 	return openai.HandleOpenAIChatCompletionStreaming(
 		ctx,
 		provider.streamingClient,
