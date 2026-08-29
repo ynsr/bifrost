@@ -35,6 +35,16 @@
 ARG GOPROXY
 ENV GOPROXY=$GOPROXY
 
+# HTTP_PROXY/HTTPS_PROXY/NO_PROXY: optional build args for HTTP forward proxy
+# Use when GOPROXY doesn't work (e.g. your proxy is an HTTP forward proxy).
+# Pass --build-arg HTTP_PROXY=http://host.docker.internal:10808 (or set the env vars on the host).
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
+ARG NO_PROXY
+ENV HTTP_PROXY=$HTTP_PROXY
+ENV HTTPS_PROXY=$HTTPS_PROXY
+ENV NO_PROXY=$NO_PROXY
+
   # Copy all local modules
   COPY core/ ./core/
   COPY framework/ ./framework/

@@ -11,7 +11,10 @@
 #   ./scripts/docker-push.sh --goproxy https://my-proxy:8080  # custom Go module proxy
 #
 # Environment:
-#   GOPROXY  If set, used as the Go module proxy (overridden by --goproxy)
+#   GOPROXY       If set, used as the Go module proxy (overridden by --goproxy)
+#   HTTP_PROXY    If set, passed as build-arg for HTTP forward proxy (e.g. mitmproxy, Squid)
+#   HTTPS_PROXY   If set, passed as build-arg for HTTPS forward proxy
+#   NO_PROXY      If set, passed as build-arg for proxy exclusion
 #
 # Prerequisites:
 #   - Docker installed and running
@@ -106,12 +109,25 @@ BUILD_ARGS=(
 # Pass GOPROXY build-arg if set (via env var or --goproxy flag)
 if [[ -n "$GOPROXY" ]]; then
     echo "🔧 Using GOPROXY=$GOPROXY"
-    if [[ "$GOPROXY" == *localhost* ]]; then
-        echo "   ⚠️  localhost inside container won't reach the host. Use host.docker.internal instead:"
-        echo "   💡  --goproxy http://host.docker.internal:10808,direct"
+    # Check if the URL looks like an HTTP forward proxy (common forward-proxy ports)
+    proxy_port=$(echo "$GOPROXY" | grep -oE ':[0-9]+' | head -1 | tr -d ':')
+    if [[ -n "$proxy_port" ]] && [[ "$proxy_port" =~ ^(10808|8080|3128|8888|1080)$ ]]; then
+        echo "   ⚠️  That looks like an HTTP forward proxy, not a Go module proxy."
+        echo "   💡  Set HTTP_PROXY=http://host.docker.internal:$proxy_port instead and re-run without --goproxy"
+    elif [[ "$GOPROXY" == *localhost* ]]; then
+        echo "   ⚠️  localhost inside container won't reach the host. Use host.docker.internal:"
+        echo "   💡  --goproxy http://host.docker.internal:$proxy_port,direct"
     fi
     BUILD_ARGS+=(--build-arg "GOPROXY=$GOPROXY")
 fi
+
+# Pass HTTP_PROXY/HTTPS_PROXY/NO_PROXY build-args if set (from host environment)
+for proxy_var in HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy; do
+    if [[ -n "${!proxy_var:-}" ]]; then
+        BUILD_ARGS+=(--build-arg "$proxy_var=${!proxy_var}")
+        echo "🔗  Forwarding $proxy_var=${!proxy_var}"
+    fi
+done
 
 docker buildx build     "${BUILD_ARGS[@]}"     -f Dockerfile     .
 
