@@ -769,6 +769,7 @@ export interface CoreConfig {
 	// Request types excluded from Logs and Dashboard reads. Logs are still stored.
 	hidden_request_types: string[];
 	routing_chain_max_depth: number;
+	models_cache_ttl: number;
 	header_filter_config?: GlobalHeaderFilterConfig;
 	mcp_external_client_url?: SecretVar;
 	a2a_external_client_url?: SecretVar;
@@ -825,6 +826,7 @@ export const DefaultCoreConfig: CoreConfig = {
 	delete_expired_virtual_keys: false,
 	hidden_request_types: [],
 	routing_chain_max_depth: 10,
+	models_cache_ttl: 300,
 };
 
 // Semantic cache configuration types

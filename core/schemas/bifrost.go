@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"time"
 )
 
 const (
@@ -40,6 +41,7 @@ type BifrostConfig struct {
 	KVStore            KVStore         // shared KV store for clustering/session stickiness; nil = disabled
 	SessionAffinity    SessionAffinity // Decides which key a session stays on; nil = Bifrost's own default, which needs KVStore to bind anything
 	ModelCatalog       ModelInfoProvider
+	ModelsCacheTTL     time.Duration      // TTL for model list caching (default: 5 minutes, 0 disables caching)
 }
 
 // ModelProvider represents the different AI model providers supported by Bifrost.

@@ -124,6 +124,7 @@ type ClientConfig struct {
 	A2AExternalClientURL                  *schemas.SecretVar                    `json:"a2a_external_client_url,omitempty"`           // Public base URL used for Agent Gateway push-notification callback URLs and served agent card URLs. Supports env var syntax ("env.MY_VAR") and vault refs
 	MCPServerAuthMode                     tables.MCPServerAuthMode              `json:"mcp_server_auth_mode,omitempty"`              // How /mcp authenticates inbound clients: headers (default), both, or oauth.
 	OAuth2ServerConfig                    *tables.OAuth2ServerConfig            `json:"oauth2_server_config,omitempty"`              // OAuth2 AS-specific settings (IssuerURL, token TTLs). Only relevant when MCPServerAuthMode is both or oauth.
+	ModelsCacheTTL                        int                                   `json:"models_cache_ttl,omitempty"`  // TTL in seconds for model list caching (default: 300, 0 disables)
 	ConfigHash                            string                                `json:"-"`                                           // Config hash for reconciliation (not serialized)
 	DumpErrorsInConsoleLogs               bool                                  `json:"dump_errors_in_console_logs"`                 // Dump error details in console logs
 	WebhookConfig                         *tables.WebhookConfig                 `json:"webhook_config,omitempty"`                    // Global webhook delivery settings; nil means all defaults
@@ -173,6 +174,11 @@ func (c *ClientConfig) GenerateClientConfigHash() (string, error) {
 	hash := sha256.New()
 
 	// Hash boolean fields
+	// Only hash non-zero models_cache_ttl (default is zero/omitted on wire so no churn)
+	if c.ModelsCacheTTL > 0 {
+		hash.Write([]byte("modelsCacheTTL:" + strconv.Itoa(c.ModelsCacheTTL)))
+	}
+
 	if c.DropExcessRequests {
 		hash.Write([]byte("dropExcessRequests:true"))
 	} else {

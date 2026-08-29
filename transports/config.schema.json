@@ -374,6 +374,12 @@
           "description": "Maximum depth for routing rule chain evaluation",
           "default": 10
         },
+        "models_cache_ttl": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "TTL in seconds for caching model lists per provider. Set to 0 to disable caching (default: 300). Can also be set via the BIFROST_MODELS_CACHE_TTL environment variable.",
+          "default": 300
+        },
         "mcp_external_client_url": {
           "anyOf": [
             {

@@ -3303,6 +3303,7 @@ func (s *BifrostHTTPServer) Bootstrap(ctx context.Context) error {
 		MCPHeadersProvider: s.Config.MCPHeadersProvider,
 		Logger:             logger,
 		KVStore:            s.Config.KVStore,
+		ModelsCacheTTL:     time.Duration(s.Config.ClientConfig.ModelsCacheTTL) * time.Second,
 		ModelCatalog:       s.Config.ModelCatalog,
 	})
 	if err != nil {

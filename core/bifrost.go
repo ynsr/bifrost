@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"slices"
 	"sort"
 	"strings"
@@ -144,6 +145,42 @@ type Bifrost struct {
 	keyPoolFilter       schemas.KeyPoolFilter               // optional hook to veto keys before selection (nil = all eligible)
 	kvStore             schemas.KVStore                     // optional KV store for session stickiness (nil = disabled)
 	sessionAffinity     schemas.SessionAffinity             // decides which key a session stays on; never nil after Init
+	modelsCacheTTL      time.Duration                       // TTL for model list caching; 0 disables caching
+	modelsListCache     sync.Map                            // per-provider model list cache: map[ModelProvider]*modelsCacheEntry
+}
+
+// modelsCacheEntry holds a cached model list response with its timestamp.
+type modelsCacheEntry struct {
+	resp      *schemas.BifrostListModelsResponse
+	timestamp time.Time
+}
+
+// getCachedModels returns the cached model list for a provider if it is still fresh.
+func (bifrost *Bifrost) getCachedModels(provider string) *schemas.BifrostListModelsResponse {
+	if val, ok := bifrost.modelsListCache.Load(provider); ok {
+		entry := val.(*modelsCacheEntry)
+		if time.Since(entry.timestamp) < bifrost.modelsCacheTTL {
+			return entry.resp
+		}
+		bifrost.modelsListCache.Delete(provider)
+	}
+	return nil
+}
+
+// setCachedModels stores a model list response in the cache with the current timestamp.
+func (bifrost *Bifrost) setCachedModels(provider string, resp *schemas.BifrostListModelsResponse) {
+	bifrost.modelsListCache.Store(provider, &modelsCacheEntry{
+		resp:      resp,
+		timestamp: time.Now(),
+	})
+}
+
+// invalidateModelsCache clears all cached model lists. Used when providers are added/removed/updated.
+func (bifrost *Bifrost) invalidateModelsCache() {
+	bifrost.modelsListCache.Range(func(key, value interface{}) bool {
+		bifrost.modelsListCache.Delete(key)
+		return true
+	})
 }
 
 // ProviderQueue wraps a provider's request channel with lifecycle management
@@ -283,20 +320,32 @@ func Init(ctx context.Context, config schemas.BifrostConfig) (*Bifrost, error) {
 
 	bifrostCtx, cancel := schemas.NewBifrostContextWithCancel(ctx)
 	bifrost := &Bifrost{
-		ctx:           bifrostCtx,
-		cancel:        cancel,
-		account:       config.Account,
-		llmPlugins:    atomic.Pointer[[]schemas.LLMPlugin]{},
-		mcpPlugins:    atomic.Pointer[[]schemas.MCPPlugin]{},
-		a2aPlugins:    atomic.Pointer[[]schemas.A2APlugin]{},
-		requestQueues: sync.Map{},
-		waitGroups:    sync.Map{},
-		keySelector:   config.KeySelector,
-		keyPoolFilter: config.KeyPoolFilter,
-		mcpCredStore:  credstore.NewCredStore(config.OAuth2Provider, config.MCPHeadersProvider, config.Logger),
-		logger:        config.Logger,
-		kvStore:       config.KVStore,
-		modelCatalog:  config.ModelCatalog,
+		ctx:            bifrostCtx,
+		cancel:         cancel,
+		account:        config.Account,
+		llmPlugins:     atomic.Pointer[[]schemas.LLMPlugin]{},
+		mcpPlugins:     atomic.Pointer[[]schemas.MCPPlugin]{},
+		a2aPlugins:     atomic.Pointer[[]schemas.A2APlugin]{},
+		requestQueues:  sync.Map{},
+		waitGroups:     sync.Map{},
+		keySelector:    config.KeySelector,
+		keyPoolFilter:  config.KeyPoolFilter,
+		mcpCredStore:   credstore.NewCredStore(config.OAuth2Provider, config.MCPHeadersProvider, config.Logger),
+		logger:         config.Logger,
+		kvStore:        config.KVStore,
+		modelCatalog:   config.ModelCatalog,
+		modelsCacheTTL: config.ModelsCacheTTL,
+	}
+	// Models cache TTL: apply env var override if present, then default to 5 minutes.
+	if bifrost.modelsCacheTTL <= 0 {
+		if envStr := os.Getenv("BIFROST_MODELS_CACHE_TTL"); envStr != "" {
+			if d, err := time.ParseDuration(envStr); err == nil && d > 0 {
+				bifrost.modelsCacheTTL = d
+			}
+		}
+		if bifrost.modelsCacheTTL <= 0 {
+			bifrost.modelsCacheTTL = 5 * time.Minute
+		}
 	}
 	bifrost.tracer.Store(&tracerWrapper{tracer: tracer})
 	if config.LLMPlugins == nil {
@@ -4152,6 +4201,7 @@ func (bifrost *Bifrost) RemoveProvider(providerKey schemas.ModelProvider) error 
 		return err
 	}
 
+	bifrost.invalidateModelsCache()
 	bifrost.logger.Info("successfully removed provider %s", providerKey)
 	schemas.UnregisterKnownProvider(providerKey)
 	return nil
@@ -4377,6 +4427,7 @@ transferComplete:
 		bifrost.drainQueueWithErrors(oldPq)
 	}
 
+	bifrost.invalidateModelsCache()
 	bifrost.logger.Info("successfully updated provider configuration for provider %s", providerKey)
 	return nil
 }
@@ -5038,6 +5089,7 @@ func (bifrost *Bifrost) prepareProvider(providerKey schemas.ModelProvider, confi
 		}
 	}
 
+	bifrost.invalidateModelsCache()
 	schemas.RegisterKnownProvider(providerKey)
 
 	for range config.ConcurrencyAndBufferSize.Concurrency {
@@ -8481,9 +8533,19 @@ func (bifrost *Bifrost) handleProviderRequest(provider schemas.Provider, config 
 	response := &schemas.BifrostResponse{}
 	switch req.RequestType {
 	case schemas.ListModelsRequest:
+		// Check model list cache when TTL > 0
+		if bifrost.modelsCacheTTL > 0 {
+			if cached := bifrost.getCachedModels(string(provider.GetProviderKey())); cached != nil {
+				response.ListModelsResponse = cached
+				break
+			}
+		}
 		listModelsResponse, bifrostError := provider.ListModels(req.Context, keys, req.BifrostRequest.ListModelsRequest)
 		if bifrostError != nil {
 			return nil, bifrostError
+		}
+		if bifrost.modelsCacheTTL > 0 {
+			bifrost.setCachedModels(string(provider.GetProviderKey()), listModelsResponse)
 		}
 		response.ListModelsResponse = listModelsResponse
 	case schemas.ModelRetrieveRequest:

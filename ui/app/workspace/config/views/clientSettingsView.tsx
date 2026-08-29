@@ -378,6 +378,29 @@ export default function ClientSettingsView() {
 				</div>
 			</div>
 
+			{/* Models Cache TTL */}
+			<div className="flex items-center justify-between space-x-2">
+				<div className="space-y-0.5">
+					<label htmlFor="models-cache-ttl" className="text-sm font-medium">
+						Models Cache TTL (seconds)
+					</label>
+					<p className="text-muted-foreground text-sm">
+						Time-to-live for cached model lists. Each provider's model list is cached separately. Set to 0 to disable caching (default: 300).
+					</p>
+				</div>
+				<Input
+					id="models-cache-ttl"
+					type="number"
+					min={0}
+					className="w-32"
+					value={localConfig.models_cache_ttl}
+					onChange={(e) => handleConfigChange("models_cache_ttl", parseInt(e.target.value) || 0)}
+					disabled={!hasSettingsUpdateAccess}
+					data-testid="client-settings-models-cache-ttl-input"
+				/>
+				</div>
+			</div>
+
 			<UserAgentMappingsView disabled={isLoading || !hasSettingsUpdateAccess} />
 
 			{/* Header Filter Section */}
