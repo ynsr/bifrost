@@ -99,11 +99,17 @@ BUILD_ARGS=(
     --progress=auto
     "${DOCKER_TAGS[@]}"
     --build-arg VERSION="$VERSION"
+    # Map host.docker.internal to host gateway (Docker >= 20.10)
+    --add-host host.docker.internal:host-gateway
 )
 
 # Pass GOPROXY build-arg if set (via env var or --goproxy flag)
 if [[ -n "$GOPROXY" ]]; then
     echo "🔧 Using GOPROXY=$GOPROXY"
+    if [[ "$GOPROXY" == *localhost* ]]; then
+        echo "   ⚠️  localhost inside container won't reach the host. Use host.docker.internal instead:"
+        echo "   💡  --goproxy http://host.docker.internal:10808,direct"
+    fi
     BUILD_ARGS+=(--build-arg "GOPROXY=$GOPROXY")
 fi
 
