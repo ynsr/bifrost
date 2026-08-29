@@ -8,6 +8,10 @@
 #   ./scripts/docker-push.sh --skip-push  # build only, no push
 #   ./scripts/docker-push.sh --tag v1.0.0 # tag with a specific version
 #   ./scripts/docker-push.sh --help       # show this help
+#   ./scripts/docker-push.sh --goproxy https://my-proxy:8080  # custom Go module proxy
+#
+# Environment:
+#   GOPROXY  If set, used as the Go module proxy (overridden by --goproxy)
 #
 # Prerequisites:
 #   - Docker installed and running
@@ -26,6 +30,7 @@ IMAGE_NAME="yooresh/bifrost"
 PUSH_IMAGE=false
 SKIP_PUSH=false
 VERSION=""
+GOPROXY="${GOPROXY:-}"
 
 # ------------------------------------------------------------------
 # Parse arguments
@@ -40,6 +45,7 @@ while [[ $# -gt 0 ]]; do
         --push)     PUSH_IMAGE=true ;;
         --skip-push) SKIP_PUSH=true ;;
         --tag)      VERSION="$2"; shift ;;
+        --goproxy)  GOPROXY="$2"; shift ;;
         --help)     usage ;;
         *)          echo "Unknown option: $1"; usage ;;
     esac
@@ -88,13 +94,20 @@ BUILD_START=$(date +%s)
 echo "🔨 Building Docker image..."
 cd "$PROJECT_ROOT"
 
-docker buildx build \
-    --platform linux/amd64 \
-    --progress=auto \
-    "${DOCKER_TAGS[@]}" \
-    --build-arg VERSION="$VERSION" \
-    -f Dockerfile \
-    .
+BUILD_ARGS=(
+    --platform linux/amd64
+    --progress=auto
+    "${DOCKER_TAGS[@]}"
+    --build-arg VERSION="$VERSION"
+)
+
+# Pass GOPROXY build-arg if set (via env var or --goproxy flag)
+if [[ -n "$GOPROXY" ]]; then
+    echo "🔧 Using GOPROXY=$GOPROXY"
+    BUILD_ARGS+=(--build-arg "GOPROXY=$GOPROXY")
+fi
+
+docker buildx build     "${BUILD_ARGS[@]}"     -f Dockerfile     .
 
 BUILD_END=$(date +%s)
 BUILD_DURATION=$((BUILD_END - BUILD_START))
