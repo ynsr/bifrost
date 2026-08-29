@@ -734,6 +734,14 @@ func (h *ConfigHandler) updateConfig(ctx *fasthttp.RequestCtx) {
 		updatedConfig.AsyncJobResultTTL = payload.ClientConfig.AsyncJobResultTTL
 	}
 
+	// No restart needed — ReloadClientConfigFromConfigStore publishes the full struct live.
+	updatedConfig.ModelsCacheTTL = payload.ClientConfig.ModelsCacheTTL
+
+	// ModelsContextWindowMaxSize — persists and propagates through the model cache refresh.
+	// No restart needed — the model cache lazily picks up the new value.
+	updatedConfig.ModelsContextWindowMaxSize = payload.ClientConfig.ModelsContextWindowMaxSize
+	updatedConfig.ModelsContextWindowApplyMode = payload.ClientConfig.ModelsContextWindowApplyMode
+
 	// Handle RequiredHeaders changes (no restart needed - governance plugin reads via pointer)
 	updatedConfig.RequiredHeaders = payload.ClientConfig.RequiredHeaders
 

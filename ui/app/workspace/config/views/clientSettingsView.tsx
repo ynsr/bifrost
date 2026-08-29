@@ -2,6 +2,7 @@ import PageTitle from "@/components/pageTitle";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { getErrorMessage, useGetCoreConfigQuery, useGetDroppedRequestsQuery, useUpdateCoreConfigMutation } from "@/lib/store";
@@ -110,6 +111,8 @@ export default function ClientSettingsView() {
 			localConfig.disable_db_pings_in_health !== config.disable_db_pings_in_health ||
 			localConfig.dump_errors_in_console_logs !== config.dump_errors_in_console_logs ||
 			localConfig.async_job_result_ttl !== config.async_job_result_ttl ||
+			localConfig.models_context_window_max_size !== config.models_context_window_max_size ||
+			localConfig.models_context_window_apply_mode !== config.models_context_window_apply_mode ||
 			!headerFilterConfigEqual(localConfig.header_filter_config, config.header_filter_config)
 		);
 	}, [config, localConfig]);
@@ -132,7 +135,7 @@ export default function ClientSettingsView() {
 
 	const hasSecurityHeaderError = invalidSecurityHeaders.length > 0;
 
-	const handleConfigChange = useCallback((field: keyof CoreConfig, value: boolean | number | string[] | GlobalHeaderFilterConfig) => {
+	const handleConfigChange = useCallback((field: keyof CoreConfig, value: boolean | number | string | string[] | GlobalHeaderFilterConfig) => {
 		setLocalConfig((prev) => ({ ...prev, [field]: value }));
 	}, []);
 
@@ -398,6 +401,55 @@ export default function ClientSettingsView() {
 					disabled={!hasSettingsUpdateAccess}
 					data-testid="client-settings-models-cache-ttl-input"
 				/>
+			</div>
+
+			{/* Models Context Window Max Size */}
+			<div className="space-y-4">
+				<div className="flex items-center justify-between space-x-2">
+					<div className="space-y-0.5">
+						<label htmlFor="models-context-window-max-size" className="text-sm font-medium">
+							Models Context Window Max Size
+						</label>
+						<p className="text-muted-foreground text-sm">
+							Override or fill the context window size for all models across all providers. Set to 0 to disable.
+						</p>
+					</div>
+					<Input
+						id="models-context-window-max-size"
+						type="number"
+						min={0}
+						className="w-32"
+						value={localConfig.models_context_window_max_size}
+						onChange={(e) => handleConfigChange("models_context_window_max_size", parseInt(e.target.value) || 0)}
+						disabled={!hasSettingsUpdateAccess}
+						data-testid="client-settings-models-context-window-max-size-input"
+					/>
+				</div>
+				{localConfig.models_context_window_max_size > 0 && (
+					<div className="flex items-center justify-between space-x-2">
+						<div className="space-y-0.5">
+							<label htmlFor="models-context-window-apply-mode" className="text-sm font-medium">
+								Apply Mode
+							</label>
+							<p className="text-muted-foreground text-sm">
+								"Override all" replaces every model's context window. "Fill missing" only applies to models without an existing value.
+							</p>
+						</div>
+						<Select
+							value={localConfig.models_context_window_apply_mode || "fill_missing"}
+							onValueChange={(value) => handleConfigChange("models_context_window_apply_mode", value)}
+							disabled={!hasSettingsUpdateAccess}
+						>
+							<SelectTrigger className="w-48" data-testid="client-settings-context-window-apply-mode-select">
+								<SelectValue />
+							</SelectTrigger>
+							<SelectContent>
+								<SelectItem value="fill_missing">Fill Missing</SelectItem>
+								<SelectItem value="override">Override All</SelectItem>
+							</SelectContent>
+						</Select>
+					</div>
+				)}
 			</div>
 
 			<UserAgentMappingsView disabled={isLoading || !hasSettingsUpdateAccess} />

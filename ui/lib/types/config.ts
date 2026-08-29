@@ -770,6 +770,8 @@ export interface CoreConfig {
 	hidden_request_types: string[];
 	routing_chain_max_depth: number;
 	models_cache_ttl: number;
+	models_context_window_max_size: number;
+	models_context_window_apply_mode?: "override" | "fill_missing";
 	header_filter_config?: GlobalHeaderFilterConfig;
 	mcp_external_client_url?: SecretVar;
 	a2a_external_client_url?: SecretVar;
@@ -827,7 +829,8 @@ export const DefaultCoreConfig: CoreConfig = {
 	hidden_request_types: [],
 	routing_chain_max_depth: 10,
 	models_cache_ttl: 300,
-};
+	models_context_window_max_size: 0,
+} as CoreConfig;
 
 // Semantic cache configuration types
 interface BaseCacheConfig {

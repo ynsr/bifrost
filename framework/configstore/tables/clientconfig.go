@@ -65,6 +65,15 @@ type TableClientConfig struct {
 	AllowDirectKeys                       bool                           `gorm:"default:false" json:"allow_direct_keys"`                              // Allow callers to bypass the registered key pool via x-bf-direct-key header
 	ModelsCacheTTL                        int                            `gorm:"column:models_cache_ttl;default:0" json:"models_cache_ttl,omitempty"` // Model list cache TTL in seconds (0 = disabled)
 	VKRotationCooldownNS                  int64                          `gorm:"column:vk_rotation_cooldown_ns;default:0" json:"-"`                   // Rotation grace period in nanoseconds (Go duration encoding); 0 = previous value stops working immediately
+	// ModelsContextWindowMaxSize sets a max context window size for all models.
+	// 0 = disabled. When > 0, all models (or those without an existing context_length,
+	// depending on ModelsContextWindowApplyMode) get this value as their context_length.
+	ModelsContextWindowMaxSize int `gorm:"column:models_context_window_max_size;default:0" json:"models_context_window_max_size,omitempty"`
+	// ModelsContextWindowApplyMode controls how ModelsContextWindowMaxSize is applied.
+	// "override" — replaces every model's context_length with the configured value.
+	// "fill_missing" — only sets context_length on models that currently have none.
+	// Defaults to "fill_missing" when ModelsContextWindowMaxSize > 0.
+	ModelsContextWindowApplyMode string `gorm:"column:models_context_window_apply_mode;type:varchar(20);default:''" json:"models_context_window_apply_mode,omitempty"`
 
 	// Compat plugin feature flags
 	CompatConvertTextToChat                   bool `gorm:"column:compat_convert_text_to_chat;default:false" json:"-"`

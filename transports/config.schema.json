@@ -380,6 +380,18 @@
           "description": "TTL in seconds for caching model lists per provider. Set to 0 to disable caching (default: 300). Can also be set via the BIFROST_MODELS_CACHE_TTL environment variable.",
           "default": 300
         },
+        "models_context_window_max_size": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Sets a max context window size for all models across all providers. 0 = disabled. When > 0, applies the value according to models_context_window_apply_mode.",
+          "default": 0
+        },
+        "models_context_window_apply_mode": {
+          "type": "string",
+          "enum": ["override", "fill_missing"],
+          "description": "Controls how models_context_window_max_size is applied. override replaces every model context_length. fill_missing only fills models that have no existing context_length. Defaults to fill_missing when max_size > 0.",
+          "default": "fill_missing"
+        },
         "mcp_external_client_url": {
           "anyOf": [
             {
@@ -620,10 +632,10 @@
           "$ref": "#/$defs/provider"
         },
         "deepseek": {
-		"cline-pass": {
-			"$ref": "#/\$defs/provider"
-		},
           "$ref": "#/$defs/provider_with_deepseek_config"
+        },
+        "cline-pass": {
+          "$ref": "#/$defs/provider"
         },
         "wafer": {
           "$ref": "#/$defs/provider"

@@ -125,6 +125,15 @@ type ClientConfig struct {
 	MCPServerAuthMode                     tables.MCPServerAuthMode              `json:"mcp_server_auth_mode,omitempty"`              // How /mcp authenticates inbound clients: headers (default), both, or oauth.
 	OAuth2ServerConfig                    *tables.OAuth2ServerConfig            `json:"oauth2_server_config,omitempty"`              // OAuth2 AS-specific settings (IssuerURL, token TTLs). Only relevant when MCPServerAuthMode is both or oauth.
 	ModelsCacheTTL                        int                                   `json:"models_cache_ttl,omitempty"`  // TTL in seconds for model list caching (default: 300, 0 disables)
+	// ModelsContextWindowMaxSize sets a max context window size for all models.
+	// 0 = disabled. When > 0, all models (or those without an existing context_length,
+	// depending on ModelsContextWindowApplyMode) get this value as their context_length.
+	ModelsContextWindowMaxSize int                                   `json:"models_context_window_max_size,omitempty"`
+	// ModelsContextWindowApplyMode controls how ModelsContextWindowMaxSize is applied.
+	// "override" — replaces every model's context_length with the configured value.
+	// "fill_missing" — only sets context_length on models that currently have none.
+	// Defaults to "fill_missing" when ModelsContextWindowMaxSize > 0.
+	ModelsContextWindowApplyMode string                               `json:"models_context_window_apply_mode,omitempty"`
 	ConfigHash                            string                                `json:"-"`                                           // Config hash for reconciliation (not serialized)
 	DumpErrorsInConsoleLogs               bool                                  `json:"dump_errors_in_console_logs"`                 // Dump error details in console logs
 	WebhookConfig                         *tables.WebhookConfig                 `json:"webhook_config,omitempty"`                    // Global webhook delivery settings; nil means all defaults
@@ -177,6 +186,12 @@ func (c *ClientConfig) GenerateClientConfigHash() (string, error) {
 	// Only hash non-zero models_cache_ttl (default is zero/omitted on wire so no churn)
 	if c.ModelsCacheTTL > 0 {
 		hash.Write([]byte("modelsCacheTTL:" + strconv.Itoa(c.ModelsCacheTTL)))
+	}
+
+	// Hash models_context_window_max_size when non-zero.
+	if c.ModelsContextWindowMaxSize > 0 {
+		hash.Write([]byte("modelsContextWindowMaxSize:" + strconv.Itoa(c.ModelsContextWindowMaxSize)))
+		hash.Write([]byte("modelsContextWindowApplyMode:" + c.ModelsContextWindowApplyMode))
 	}
 
 	if c.DropExcessRequests {

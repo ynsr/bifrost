@@ -241,3 +241,6 @@ require (
 	gorm.io/driver/clickhouse v0.7.0 // indirect
 	gorm.io/driver/postgres v1.6.0 // indirect
 )
+
+replace github.com/maximhq/bifrost/framework => ../framework
+replace github.com/maximhq/bifrost/core => ../core
