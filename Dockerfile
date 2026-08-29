@@ -13,7 +13,7 @@ RUN npm ci
 COPY ui/ ./
 
 # Build UI
-RUN npm run build-enterprise
+RUN npx vite build
 
 # --- Go Build Stage: Compile the Go binary using local modules ---
 FROM golang:1.27.0-alpine3.24@sha256:4c9fe60190a2a3350ddc51de80d0224b8a6698d12bdfc999fee45ea9d6c46dbc AS builder
