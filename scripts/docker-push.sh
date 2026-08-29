@@ -184,25 +184,33 @@ echo "📤 Pushing to Docker Hub..."
 # Docker registry DNS resolver
 # Docker daemon on Linux uses Go's DNS resolver, which reads /etc/hosts
 # before querying upstream servers. If your network blocks UDP:53 (common
-# behind SOCKS5 proxies), we resolve registry-1.docker.io through a local
-# SOCKS5-aware DNS proxy and pin the IP in /etc/hosts so docker push works.
+# behind SOCKS5 proxies), we resolve all Docker Hub domains through a
+# local SOCKS5-aware DNS proxy and pin them in /etc/hosts so docker push
+# works end-to-end.
 # ------------------------------------------------------------------
 resolve_docker_registry() {
-    local registry="registry-1.docker.io"
     local dns_proxy="$SCRIPT_DIR/dns2socks5.py"
+    local domains=(registry-1.docker.io auth.docker.io production.cloudflare.docker.com)
+    local need_resolve=()
 
-    # Already resolvable? Great, skip.
-    if getent hosts "$registry" >/dev/null 2>&1; then
+    # Check which domains already resolve
+    for domain in "${domains[@]}"; do
+        if ! getent hosts "$domain" >/dev/null 2>&1; then
+            need_resolve+=("$domain")
+        fi
+    done
+
+    # Already all resolvable? Great, skip.
+    if [[ ${#need_resolve[@]} -eq 0 ]]; then
         return 0
     fi
 
-    echo "⚠️  $registry does not resolve (UDP:53 is likely blocked)."
+    echo "⚠️  ${need_resolve[*]} do not resolve (UDP:53 is likely blocked)."
 
     # Start the SOCKS5-aware DNS proxy on an ephemeral port
     if [[ ! -f "$dns_proxy" ]]; then
         echo "   DNS proxy script not found at $dns_proxy"
-        echo "   💡  Resolve the IP manually and add it to /etc/hosts:"
-        echo "        echo '<IP> $registry' | sudo tee -a /etc/hosts"
+        echo "   💡  Add entries to /etc/hosts manually via docker-registry-dns.sh"
         return 1
     fi
 
@@ -211,59 +219,91 @@ resolve_docker_registry() {
     if ss -tulpn 2>/dev/null | grep -q ":$proxy_port "; then
         echo "   Port $proxy_port in use, trying next..."
         proxy_port=15354
+        if ss -tulpn 2>/dev/null | grep -q ":$proxy_port "; then
+            echo "   Port $proxy_port also in use. Starting DNS proxy directly..."
+            proxy_port=$((RANDOM % 20000 + 20000))
+        fi
     fi
 
     echo "   Starting DNS proxy (SOCKS5 → upstream DNS) on port $proxy_port..."
     python3.12 "$dns_proxy" --port "$proxy_port" &
     local proxy_pid=$!
-    # Give it time to start
     sleep 1
 
-    # Resolve the registry IP
-    local ip
-    ip=$(dig @"127.0.0.1" -p "$proxy_port" "$registry" +short +timeout=5 2>/dev/null | head -1)
+    # Check proxy started
+    if ! kill -0 "$proxy_pid" 2>/dev/null; then
+        echo "   ❌ DNS proxy failed to start."
+        echo "   Make sure PySocks is installed: pip3 install pysocks"
+        return 1
+    fi
+
+    local resolved=0
+    local pending_update=""
+
+    for domain in "${need_resolve[@]}"; do
+        local ip
+        ip=$(dig @"127.0.0.1" -p "$proxy_port" "$domain" +short +timeout=5 2>/dev/null | head -1)
+        if [[ -n "$ip" ]]; then
+            echo "   Resolved $domain → $ip"
+            pending_update+="$ip $domain # docker-push.sh auto-entry"$'\n'
+            ((resolved++))
+        else
+            echo "   ❌ Could not resolve $domain"
+        fi
+    done
 
     kill "$proxy_pid" 2>/dev/null || true
 
-    if [[ -z "$ip" ]]; then
-        echo "   ❌ Could not resolve $registry even through the DNS proxy."
+    if [[ "$resolved" -eq 0 ]]; then
+        echo "   ❌ Could not resolve any Docker Hub domains."
         echo "   Check that your SOCKS5 proxy is running on 127.0.0.1:10808."
         return 1
     fi
 
-    # Add to /etc/hosts
-    echo "   Resolved $registry → $ip"
-    if grep -q "$registry" /etc/hosts 2>/dev/null; then
-        # Update existing entry
-        if echo "$ip $registry" | sudo tee /etc/hosts.tmp >/dev/null 2>&1; then
-            sudo mv /etc/hosts.tmp /etc/hosts
-            echo "   ✅ Updated /etc/hosts entry for $registry"
-        else
-            echo "   ⚠️  Could not update /etc/hosts (sudo required)."
-            echo "   💡  Run this manually:"
-            echo "        echo '$ip $registry' | sudo tee -a /etc/hosts"
-            return 1
-        fi
+    # Append all resolved entries to /etc/hosts atomically
+    local tmp_entries
+    tmp_entries=$(mktemp)
+    echo "$pending_update" > "$tmp_entries"
+
+    # Merge into /etc/hosts: remove old docker entries and append fresh ones
+    local new_hosts
+    new_hosts=$(mktemp)
+    # Strip any existing lines for our domains (with or without marker), plus
+    # the old marker-comment lines from prior runs
+    if sed '/# docker-push.sh auto-entry$/d; /registry-1\.docker\.io/d; /auth\.docker\.io/d; /production\.cloudflare\.docker\.com/d' /etc/hosts 2>/dev/null > "$new_hosts"; then
+        cat "$tmp_entries" >> "$new_hosts"
     else
-        if echo "$ip $registry" | sudo tee -a /etc/hosts >/dev/null 2>&1; then
-            echo "   ✅ Added $registry → $ip to /etc/hosts"
-        else
-            echo "   ⚠️  Could not add to /etc/hosts (sudo required)."
-            echo "   💡  Run this manually:"
-            echo "        echo '$ip $registry' | sudo tee -a /etc/hosts"
-            return 1
-        fi
+        # /etc/hosts might not exist (unlikely), just create new one
+        cat "$tmp_entries" > "$new_hosts"
     fi
 
+    if sudo tee /etc/hosts < "$new_hosts" >/dev/null 2>&1; then
+        echo "   ✅ Added $resolved domain(s) to /etc/hosts"
+    else
+        echo "   ⚠️  Could not update /etc/hosts (sudo required)."
+        echo "   💡  Run this manually, then re-run the script:"
+        echo "$pending_update" | sed 's/^/        /'
+        rm -f "$tmp_entries" "$new_hosts"
+        return 1
+    fi
+
+    rm -f "$tmp_entries" "$new_hosts"
+
     # Verify
-    if getent hosts "$registry" >/dev/null 2>&1; then
-        echo "   ✅ Docker daemon can now resolve $registry"
+    local all_ok=0
+    for domain in "${domains[@]}"; do
+        if getent hosts "$domain" >/dev/null 2>&1; then
+            ((all_ok++))
+        fi
+    done
+
+    if [[ "$all_ok" -eq "${#domains[@]}" ]]; then
+        echo "   ✅ All Docker Hub domains resolvable. Ready to push."
         return 0
     else
-        echo "   ⚠️  /etc/hosts updated but Docker daemon still can't resolve."
-        echo "   The daemon may cache DNS — try restarting Docker:"
-        echo "        sudo systemctl restart docker"
-        return 1
+        echo "   ⚠️  ${all_ok}/${#domains[@]} domains resolved."
+        echo "   Docker push may still fail if it needs other domains."
+        return 0  # non-fatal — let the push try anyway
     fi
 }
 
