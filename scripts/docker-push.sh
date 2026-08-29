@@ -39,7 +39,8 @@ GOPROXY="${GOPROXY:-}"
 # Parse arguments
 # ------------------------------------------------------------------
 usage() {
-    sed -n 's/^#\s\?//p' "${BASH_SOURCE[0]}" | head -n -1
+    # Skip shebang (line 1), extract comment block (lines starting with #)
+    tail -n +2 "${BASH_SOURCE[0]}" | sed -n '/^#/s/^# \?//p'
     exit 0
 }
 
@@ -116,7 +117,11 @@ if [[ -n "$GOPROXY" ]]; then
         echo "   💡  Set HTTP_PROXY=http://host.docker.internal:$proxy_port instead and re-run without --goproxy"
     elif [[ "$GOPROXY" == *localhost* ]]; then
         echo "   ⚠️  localhost inside container won't reach the host. Use host.docker.internal:"
-        echo "   💡  --goproxy http://host.docker.internal:$proxy_port,direct"
+        if [[ -n "$proxy_port" ]]; then
+            echo "   💡  --goproxy http://host.docker.internal:$proxy_port,direct"
+        else
+            echo "   💡  --goproxy http://host.docker.internal:PORT,direct (replace PORT with the actual port)"
+        fi
     fi
     BUILD_ARGS+=(--build-arg "GOPROXY=$GOPROXY")
 fi
