@@ -127,7 +127,26 @@ if [[ -n "$GOPROXY" ]]; then
 fi
 
 # Pass HTTP_PROXY/HTTPS_PROXY/NO_PROXY build-args if set (from host environment)
-for proxy_var in HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy; do
+# Auto-rewrite 127.0.0.1 and localhost to host.docker.internal so they reach
+# the host's proxy services inside the build container.
+for proxy_var in HTTP_PROXY HTTPS_PROXY http_proxy https_proxy; do
+    if [[ -n "${!proxy_var:-}" ]]; then
+        raw_value="${!proxy_var}"
+        # Rewrite loopback addresses so they reach the host inside Docker
+        if [[ "$raw_value" == *"127.0.0.1"* ]] || [[ "$raw_value" == *"localhost"* ]]; then
+            cooked="${raw_value//127.0.0.1/host.docker.internal}"
+            cooked="${cooked//localhost/host.docker.internal}"
+            echo "🔗  Forwarding $proxy_var (rewritten: $cooked)"
+            BUILD_ARGS+=(--build-arg "$proxy_var=$cooked")
+        else
+            echo "🔗  Forwarding $proxy_var=$raw_value"
+            BUILD_ARGS+=(--build-arg "$proxy_var=$raw_value")
+        fi
+    fi
+done
+# NO_PROXY entries (localhost, loopback ranges, etc.) are safe as-is and
+# don't need rewriting — they mean "don't proxy these destinations".
+for proxy_var in NO_PROXY no_proxy; do
     if [[ -n "${!proxy_var:-}" ]]; then
         BUILD_ARGS+=(--build-arg "$proxy_var=${!proxy_var}")
         echo "🔗  Forwarding $proxy_var=${!proxy_var}"
