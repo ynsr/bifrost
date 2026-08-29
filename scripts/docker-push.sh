@@ -180,22 +180,94 @@ fi
 
 echo "📤 Pushing to Docker Hub..."
 
-# Pre-push DNS check: Docker daemon inherits /etc/resolv.conf from the host and
-# often points at 127.0.0.53 (systemd-resolved), which may not reach upstream
-# through a proxy tunnel. Verify before the push so the error message is helpful.
-if ! getent hosts registry-1.docker.io >/dev/null 2>&1; then
-    echo "⚠️  Cannot resolve registry-1.docker.io (DNS is broken inside Docker)."
-    echo "   This usually means Docker daemon uses a local DNS stub resolver"
-    echo "   that cannot reach the internet through your proxy/VPN setup."
-    echo ""
-    echo "   Fix: configure explicit upstream DNS for the Docker daemon:"
-    echo '    sudo mkdir -p /etc/docker'
-    echo "    echo '{\"dns\":[\"1.1.1.1\",\"8.8.8.8\"]}' | sudo tee /etc/docker/daemon.json"
-    echo "    sudo systemctl restart docker"
-    echo ""
-    echo "   (The build still succeeded—use --skip-push next time to skip push.)"
-    exit 1
-fi
+# ------------------------------------------------------------------
+# Docker registry DNS resolver
+# Docker daemon on Linux uses Go's DNS resolver, which reads /etc/hosts
+# before querying upstream servers. If your network blocks UDP:53 (common
+# behind SOCKS5 proxies), we resolve registry-1.docker.io through a local
+# SOCKS5-aware DNS proxy and pin the IP in /etc/hosts so docker push works.
+# ------------------------------------------------------------------
+resolve_docker_registry() {
+    local registry="registry-1.docker.io"
+    local dns_proxy="$SCRIPT_DIR/dns2socks5.py"
+
+    # Already resolvable? Great, skip.
+    if getent hosts "$registry" >/dev/null 2>&1; then
+        return 0
+    fi
+
+    echo "⚠️  $registry does not resolve (UDP:53 is likely blocked)."
+
+    # Start the SOCKS5-aware DNS proxy on an ephemeral port
+    if [[ ! -f "$dns_proxy" ]]; then
+        echo "   DNS proxy script not found at $dns_proxy"
+        echo "   💡  Resolve the IP manually and add it to /etc/hosts:"
+        echo "        echo '<IP> $registry' | sudo tee -a /etc/hosts"
+        return 1
+    fi
+
+    local proxy_port=15353
+    # Check if port is already taken
+    if ss -tulpn 2>/dev/null | grep -q ":$proxy_port "; then
+        echo "   Port $proxy_port in use, trying next..."
+        proxy_port=15354
+    fi
+
+    echo "   Starting DNS proxy (SOCKS5 → upstream DNS) on port $proxy_port..."
+    python3.12 "$dns_proxy" --port "$proxy_port" &
+    local proxy_pid=$!
+    # Give it time to start
+    sleep 1
+
+    # Resolve the registry IP
+    local ip
+    ip=$(dig @"127.0.0.1" -p "$proxy_port" "$registry" +short +timeout=5 2>/dev/null | head -1)
+
+    kill "$proxy_pid" 2>/dev/null || true
+
+    if [[ -z "$ip" ]]; then
+        echo "   ❌ Could not resolve $registry even through the DNS proxy."
+        echo "   Check that your SOCKS5 proxy is running on 127.0.0.1:10808."
+        return 1
+    fi
+
+    # Add to /etc/hosts
+    echo "   Resolved $registry → $ip"
+    if grep -q "$registry" /etc/hosts 2>/dev/null; then
+        # Update existing entry
+        if echo "$ip $registry" | sudo tee /etc/hosts.tmp >/dev/null 2>&1; then
+            sudo mv /etc/hosts.tmp /etc/hosts
+            echo "   ✅ Updated /etc/hosts entry for $registry"
+        else
+            echo "   ⚠️  Could not update /etc/hosts (sudo required)."
+            echo "   💡  Run this manually:"
+            echo "        echo '$ip $registry' | sudo tee -a /etc/hosts"
+            return 1
+        fi
+    else
+        if echo "$ip $registry" | sudo tee -a /etc/hosts >/dev/null 2>&1; then
+            echo "   ✅ Added $registry → $ip to /etc/hosts"
+        else
+            echo "   ⚠️  Could not add to /etc/hosts (sudo required)."
+            echo "   💡  Run this manually:"
+            echo "        echo '$ip $registry' | sudo tee -a /etc/hosts"
+            return 1
+        fi
+    fi
+
+    # Verify
+    if getent hosts "$registry" >/dev/null 2>&1; then
+        echo "   ✅ Docker daemon can now resolve $registry"
+        return 0
+    else
+        echo "   ⚠️  /etc/hosts updated but Docker daemon still can't resolve."
+        echo "   The daemon may cache DNS — try restarting Docker:"
+        echo "        sudo systemctl restart docker"
+        return 1
+    fi
+}
+
+resolve_docker_registry || exit 1
 
 for tag in "${TAGS[@]}"; do
     echo "   Pushing $tag..."
