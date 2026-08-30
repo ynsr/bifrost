@@ -19,8 +19,8 @@ DOCKER_DATA_DIR="$DOCKER_COMPOSE_DIR/data"
 
 RED=; GREEN=; YELLOW=; CYAN=; BOLD=; NC=
 if [ -t 1 ]; then
-  RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
-  CYAN='\033[0;36m'; BOLD='\033[1m'; NC='\033[0m'
+  RED=$'\033[0;31m'; GREEN=$'\033[0;32m'; YELLOW=$'\033[1;33m'
+  CYAN=$'\033[0;36m'; BOLD=$'\033[1m'; NC=$'\033[0m'
 fi
 
 # ── State ──────────────────────────────────────────────────────────────────
@@ -170,10 +170,15 @@ UNIT
     echo "$unit_content" > "$SERVICE_FILE"
   fi
 
-  # 5. Reload daemon, enable, start
+  # 5. Reload daemon, enable, (re)start — always restart so a rebuilt binary
+  #    is picked up; start alone is a no-op on an already-running service.
   run _sys daemon-reload
   run _sys enable "$SERVICE_NAME"
-  run _sys start "$SERVICE_NAME"
+  if _sys is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
+    run _sys restart "$SERVICE_NAME"
+  else
+    run _sys start "$SERVICE_NAME"
+  fi
 
   log OK "Bifrost installed and started."
   log INFO "  Binary:  $BIFROST_BIN"
@@ -355,8 +360,19 @@ main() {
       install|uninstall|migrate|start|stop|restart|status|logs)
         subcommand="$1"
         shift
-        # remaining args are passthrough (e.g. logs -n 50)
-        passthru=("$@")
+        # Parse known flags from remaining args; everything else is passthrough
+        # (e.g. logs -n 50). This way install -f and -f install both work.
+        while [ $# -gt 0 ]; do
+          case "$1" in
+            -f|--force)  FORCE=true  ; shift ;;
+            -v|--verbose) VERBOSE=true ; shift ;;
+            -q|--quiet)   QUIET=true   ; shift ;;
+            -n|--dry-run) DRY_RUN=true ; shift ;;
+            -h|--help)    usage; exit 0 ;;
+            --) shift; passthru=("$@"); break ;;
+            *)  passthru=("$@"); break ;;
+          esac
+        done
         break
         ;;
       *)

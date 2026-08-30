@@ -24,6 +24,7 @@ import (
 	"github.com/tidwall/gjson"
 
 	"github.com/maximhq/bifrost/core/schemas"
+	"github.com/maximhq/bifrost/framework/configstore"
 	"github.com/maximhq/bifrost/framework/modelcatalog"
 	"github.com/maximhq/bifrost/transports/bifrost-http/lib"
 	"github.com/valyala/fasthttp"
@@ -1007,7 +1008,7 @@ func (h *CompletionHandler) listModels(ctx *fasthttp.RequestCtx) {
 		return
 	}
 
-	enrichListModelsResponse(resp, h.config.ModelCatalog)
+	enrichListModelsResponse(resp, h.config.ModelCatalog, h.config.ClientConfig)
 	if resp != nil {
 		lib.ApplyBifrostResponseHeaders(ctx, bifrostCtx, resp.ExtraFields)
 	}
@@ -1090,7 +1091,7 @@ func enrichModelRetrieveResponse(resp *schemas.BifrostModelRetrieveResponse, cat
 	modelcatalog.ApplyModelInfo(&resp.Model, pricingEntry)
 }
 
-func enrichListModelsResponse(resp *schemas.BifrostListModelsResponse, catalog *modelcatalog.ModelCatalog) {
+func enrichListModelsResponse(resp *schemas.BifrostListModelsResponse, catalog *modelcatalog.ModelCatalog, clientConfig *configstore.ClientConfig) {
 	if resp == nil || len(resp.Data) == 0 {
 		return
 	}
@@ -1108,6 +1109,17 @@ func enrichListModelsResponse(resp *schemas.BifrostListModelsResponse, catalog *
 		}
 		// Same mapping ctx.GetModelInfo hands to plugins, so the two never drift.
 		modelcatalog.ApplyModelInfo(&modelEntry, pricingEntry)
+
+		// Apply client-level context window override when configured.
+		// Must run after ApplyModelInfo so catalog values are populated first,
+		// and the override can then replace them as needed.
+		if clientConfig != nil && clientConfig.ModelsContextWindowMaxSize > 0 {
+			maxSize := clientConfig.ModelsContextWindowMaxSize
+			mode := clientConfig.ModelsContextWindowApplyMode
+			if mode == "override" || (mode == "" || mode == "fill_missing") && modelEntry.ContextLength == nil {
+				modelEntry.ContextLength = &maxSize
+			}
+		}
 		resp.Data[i] = modelEntry
 	}
 }

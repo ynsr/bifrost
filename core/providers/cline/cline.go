@@ -276,6 +276,12 @@ func (provider *ClineProvider) ListModels(ctx *schemas.BifrostContext, keys []sc
 	}
 	return listFunc()
 }
+
+// ModelRetrieve is not supported by the Cline provider.
+func (provider *ClineProvider) ModelRetrieve(ctx *schemas.BifrostContext, key schemas.Key, request *schemas.BifrostModelRetrieveRequest) (*schemas.BifrostModelRetrieveResponse, *schemas.BifrostError) {
+	return nil, providerUtils.NewUnsupportedOperationError("model retrieve", provider.GetProviderKey())
+}
+
 // TextCompletion is not supported by the Cline provider.
 func (provider *ClineProvider) TextCompletion(ctx *schemas.BifrostContext, key schemas.Key, request *schemas.BifrostTextCompletionRequest) (*schemas.BifrostTextCompletionResponse, *schemas.BifrostError) {
 	return nil, providerUtils.NewUnsupportedOperationError("text completion", provider.GetProviderKey())
@@ -395,6 +401,11 @@ func (provider *ClineProvider) Rerank(ctx *schemas.BifrostContext, key schemas.K
 // OCR is not supported by the Cline provider.
 func (provider *ClineProvider) OCR(ctx *schemas.BifrostContext, key schemas.Key, request *schemas.BifrostOCRRequest) (*schemas.BifrostOCRResponse, *schemas.BifrostError) {
 	return nil, providerUtils.NewUnsupportedOperationError(schemas.OCRRequest, provider.GetProviderKey())
+}
+
+// Decision is not supported by the Cline provider.
+func (provider *ClineProvider) Decision(ctx *schemas.BifrostContext, key schemas.Key, request *schemas.BifrostDecisionRequest) (*schemas.BifrostDecisionResponse, *schemas.BifrostError) {
+	return nil, providerUtils.NewUnsupportedOperationError(schemas.DecisionRequest, provider.GetProviderKey())
 }
 
 // Speech is not supported by the Cline provider.

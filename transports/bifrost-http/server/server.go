@@ -1589,6 +1589,7 @@ func (s *BifrostHTTPServer) ReloadClientConfigFromConfigStore(ctx context.Contex
 			A2APlugins:         s.Config.GetLoadedA2APlugins(),
 			MCPConfig:          mcpConfig,
 			Logger:             logger,
+			ModelsCacheTTL:     time.Duration(s.Config.ClientConfig.ModelsCacheTTL) * time.Second,
 		})
 		if err := s.Client.UpdateToolManagerConfig(
 			s.Config.ClientConfig.MCPAgentDepth,
@@ -1615,6 +1616,10 @@ func (s *BifrostHTTPServer) ReloadClientConfigFromConfigStore(ctx context.Contex
 		if err := s.Client.UpdateMCPToolSyncInterval(syncInterval); err != nil {
 			logger.Warn("failed to sync MCP tool sync interval during client config reload: %v", err)
 		}
+		// Invalidate model list cache so the next /v1/models request picks up
+		// any changes to ModelsCacheTTL, ModelsContextWindowMaxSize, or
+		// ModelsContextWindowApplyMode with a fresh fetch.
+		s.Client.InvalidateModelsCache()
 	}
 	return nil
 }

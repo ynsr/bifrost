@@ -559,6 +559,8 @@ var configstoreMigrationSteps = []migrationStep{
 	{IDs: []string{"add_agent_push_config_tenant_column"}, run: migrationAddAgentPushConfigTenantColumn},
 	{IDs: []string{"add_ignore_provider_cost_column"}, run: migrationAddIgnoreProviderCostColumn},
 	{IDs: []string{"add_100k_token_pricing_columns"}, run: migrationAdd100kTokenPricingColumns},
+	{IDs: []string{"add_models_cache_ttl_column_to_client_config"}, run: migrationAddModelsCacheTTLColumnToClientConfig},
+	{IDs: []string{"add_models_context_window_columns_to_client_config"}, run: migrationAddModelsContextWindowColumnsToClientConfig},
 }
 
 // warpLogEmbeddingColumns are the semantic-search configuration columns added
@@ -15359,6 +15361,73 @@ func migrationAdd100kTokenPricingColumns(ctx context.Context, db *gorm.DB, logge
 			for _, field := range columns {
 				if err := dropColumnIfExists(tx, logger, &tables.TableModelPricing{}, field); err != nil {
 					return fmt.Errorf("failed to drop column %s: %w", field, err)
+				}
+			}
+			return nil
+		},
+	}})
+	if err := m.Migrate(); err != nil {
+		return fmt.Errorf("error running %s migration: %s", migrationName, err.Error())
+	}
+	return nil
+}
+
+// migrationAddModelsCacheTTLColumnToClientConfig adds the models_cache_ttl column
+// to the config_client table. This column controls the TTL for model list caching
+// per provider (default: 300 seconds, 0 disables). Idempotent via HasColumn guard.
+func migrationAddModelsCacheTTLColumnToClientConfig(ctx context.Context, db *gorm.DB, logger schemas.Logger) error {
+	migrationName := "add_models_cache_ttl_column_to_client_config"
+	logger.Info("[configstore] starting migration %s", migrationName)
+	defer logger.Info("[configstore] finished migration %s", migrationName)
+	m := migrator.New(db, migrator.DefaultOptions, []*migrator.Migration{{
+		ID: migrationName,
+		Migrate: func(tx *gorm.DB) error {
+			tx = tx.WithContext(ctx)
+			if err := addColumnIfNotExists(tx, logger, &tables.TableClientConfig{}, "ModelsCacheTTL"); err != nil {
+				return fmt.Errorf("add models_cache_ttl column: %w", err)
+			}
+			return nil
+		},
+		Rollback: func(tx *gorm.DB) error {
+			tx = tx.WithContext(ctx)
+			if err := dropColumnIfExists(tx, logger, &tables.TableClientConfig{}, "ModelsCacheTTL"); err != nil {
+				return fmt.Errorf("drop models_cache_ttl column: %w", err)
+			}
+			return nil
+		},
+	}})
+	if err := m.Migrate(); err != nil {
+		return fmt.Errorf("error running %s migration: %s", migrationName, err.Error())
+	}
+	return nil
+}
+
+// migrationAddModelsContextWindowColumnsToClientConfig adds the
+// models_context_window_max_size and models_context_window_apply_mode columns
+// to the config_client table. These control the override/fill-missing context
+// window size for all models across all providers. Idempotent via HasColumn guards.
+func migrationAddModelsContextWindowColumnsToClientConfig(ctx context.Context, db *gorm.DB, logger schemas.Logger) error {
+	migrationName := "add_models_context_window_columns_to_client_config"
+	logger.Info("[configstore] starting migration %s", migrationName)
+	defer logger.Info("[configstore] finished migration %s", migrationName)
+	m := migrator.New(db, migrator.DefaultOptions, []*migrator.Migration{{
+		ID: migrationName,
+		Migrate: func(tx *gorm.DB) error {
+			tx = tx.WithContext(ctx)
+			columns := []string{"ModelsContextWindowMaxSize", "ModelsContextWindowApplyMode"}
+			for _, col := range columns {
+				if err := addColumnIfNotExists(tx, logger, &tables.TableClientConfig{}, col); err != nil {
+					return fmt.Errorf("add %s column: %w", col, err)
+				}
+			}
+			return nil
+		},
+		Rollback: func(tx *gorm.DB) error {
+			tx = tx.WithContext(ctx)
+			columns := []string{"ModelsContextWindowMaxSize", "ModelsContextWindowApplyMode"}
+			for _, col := range columns {
+				if err := dropColumnIfExists(tx, logger, &tables.TableClientConfig{}, col); err != nil {
+					return fmt.Errorf("drop %s column: %w", col, err)
 				}
 			}
 			return nil

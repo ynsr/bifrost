@@ -176,8 +176,10 @@ func (bifrost *Bifrost) setCachedModels(provider string, resp *schemas.BifrostLi
 	})
 }
 
-// invalidateModelsCache clears all cached model lists. Used when providers are added/removed/updated.
-func (bifrost *Bifrost) invalidateModelsCache() {
+// InvalidateModelsCache clears all cached model lists. Used when providers are
+// added/removed/updated or when client config settings that affect model
+// listing (cache TTL, context window overrides) are changed at runtime.
+func (bifrost *Bifrost) InvalidateModelsCache() {
 	bifrost.modelsListCache.Range(func(key, value interface{}) bool {
 		bifrost.modelsListCache.Delete(key)
 		return true
@@ -535,6 +537,9 @@ func (bifrost *Bifrost) setModelCatalogOnContext(ctx *schemas.BifrostContext) {
 // We will keep on adding other aspects as required
 func (bifrost *Bifrost) ReloadConfig(config schemas.BifrostConfig) error {
 	bifrost.dropExcessRequests.Store(config.DropExcessRequests)
+	if config.ModelsCacheTTL > 0 {
+		bifrost.modelsCacheTTL = config.ModelsCacheTTL
+	}
 	return nil
 }
 
@@ -4202,7 +4207,7 @@ func (bifrost *Bifrost) RemoveProvider(providerKey schemas.ModelProvider) error 
 		return err
 	}
 
-	bifrost.invalidateModelsCache()
+	bifrost.InvalidateModelsCache()
 	bifrost.logger.Info("successfully removed provider %s", providerKey)
 	schemas.UnregisterKnownProvider(providerKey)
 	return nil
@@ -4428,7 +4433,7 @@ transferComplete:
 		bifrost.drainQueueWithErrors(oldPq)
 	}
 
-	bifrost.invalidateModelsCache()
+	bifrost.InvalidateModelsCache()
 	bifrost.logger.Info("successfully updated provider configuration for provider %s", providerKey)
 	return nil
 }
@@ -5092,7 +5097,7 @@ func (bifrost *Bifrost) prepareProvider(providerKey schemas.ModelProvider, confi
 		}
 	}
 
-	bifrost.invalidateModelsCache()
+	bifrost.InvalidateModelsCache()
 	schemas.RegisterKnownProvider(providerKey)
 
 	for range config.ConcurrencyAndBufferSize.Concurrency {

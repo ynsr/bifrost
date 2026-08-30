@@ -111,6 +111,7 @@ export default function ClientSettingsView() {
 			localConfig.disable_db_pings_in_health !== config.disable_db_pings_in_health ||
 			localConfig.dump_errors_in_console_logs !== config.dump_errors_in_console_logs ||
 			localConfig.async_job_result_ttl !== config.async_job_result_ttl ||
+			localConfig.models_cache_ttl !== config.models_cache_ttl ||
 			localConfig.models_context_window_max_size !== config.models_context_window_max_size ||
 			localConfig.models_context_window_apply_mode !== config.models_context_window_apply_mode ||
 			!headerFilterConfigEqual(localConfig.header_filter_config, config.header_filter_config)
