@@ -1120,6 +1120,11 @@ func enrichListModelsResponse(resp *schemas.BifrostListModelsResponse, catalog *
 				modelEntry.ContextLength = &maxSize
 			}
 		}
+		// Sync context_window with context_length so both fields carry the
+		// same value in /v1/models responses.
+		modelEntry.ContextWindow = modelEntry.ContextLength
+		// Sync max_input_tokens with context_length as well.
+		modelEntry.MaxInputTokens = modelEntry.ContextLength
 		resp.Data[i] = modelEntry
 	}
 }

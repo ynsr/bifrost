@@ -168,6 +168,7 @@ type Model struct {
 	Alias               *string            `json:"alias,omitempty"`           // Provider API identifier this model alias maps to (e.g. Azure deployment name, Bedrock ARN)
 	Created             *int64             `json:"created,omitempty"`
 	ContextLength       *int               `json:"context_length,omitempty"`
+	ContextWindow       *int               `json:"context_window,omitempty"`
 	MaxInputTokens      *int               `json:"max_input_tokens,omitempty"`
 	MaxOutputTokens     *int               `json:"max_output_tokens,omitempty"`
 	Architecture        *Architecture      `json:"architecture,omitempty"`

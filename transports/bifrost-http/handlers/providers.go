@@ -795,6 +795,7 @@ type ModelDetailsResponse struct {
 	Name                 string                `json:"name"`
 	Provider             string                `json:"provider"`
 	ContextLength        *int                  `json:"context_length,omitempty"`
+	ContextWindow        *int                  `json:"context_window,omitempty"`
 	MaxInputTokens       *int                  `json:"max_input_tokens,omitempty"`
 	MaxOutputTokens      *int                  `json:"max_output_tokens,omitempty"`
 	InputCostPerToken    *float64              `json:"input_cost_per_token,omitempty"`
@@ -985,6 +986,7 @@ func (h *ProviderHandler) listModelDetails(ctx *fasthttp.RequestCtx) {
 		capabilities := modelCatalog.GetModelCapabilityEntryForModel(model.Name, model.Provider)
 		if capabilities != nil {
 			details.ContextLength = capabilities.ContextLength
+			details.ContextWindow = capabilities.ContextLength
 			details.MaxInputTokens = capabilities.MaxInputTokens
 			details.MaxOutputTokens = capabilities.MaxOutputTokens
 			details.InputCostPerToken = capabilities.InputCostPerToken
