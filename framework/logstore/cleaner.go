@@ -13,7 +13,7 @@ const (
 	cleanupInterval      = 24 * time.Hour
 	minJitter            = 15 * time.Minute
 	maxJitter            = 30 * time.Minute
-	defaultRetentionDays = 365
+	defaultRetentionDays = 3
 
 	// batchSize is how many expired rows one retention statement deletes. At
 	// ~5.6M expired rows per day, 100-row batches under a 30-minute cap could
