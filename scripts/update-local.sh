@@ -205,13 +205,14 @@ if [ "$BRANCH" = "dev" ] && [ "$FORCE_RESET" -eq 1 ]; then
 fi
 
 # Local dev stays a clean mirror of upstream; fork work lives on $BRANCH.
+# A divergent local dev (fork commits) is expected here: hard-reset to the
+# freshly fetched upstream ref instead of failing on --ff-only.
 if [ "$NO_SYNC" -eq 0 ]; then
 	step "update local dev to $UPSTREAM_REF"
 	ensure_branch dev "$UPSTREAM_REF"
-	git pull --ff-only --no-tags "$UPSTREAM_REMOTE" "$UPSTREAM_BRANCH"
+	git reset --hard "$UPSTREAM_REF"
 	done_step "dev at $(git rev-parse --short HEAD)"
 fi
-
 if [ "$BRANCH" != "dev" ]; then
 	step "checkout $BRANCH"
 	# New fork branches start from origin/dev (ynsr) so fork-specific
