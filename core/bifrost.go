@@ -27,6 +27,7 @@ import (
 	"github.com/maximhq/bifrost/core/providers/bedrockmantle"
 	"github.com/maximhq/bifrost/core/providers/cerebras"
 	"github.com/maximhq/bifrost/core/providers/cline"
+	"github.com/maximhq/bifrost/core/providers/clineoauth"
 	"github.com/maximhq/bifrost/core/providers/cohere"
 	"github.com/maximhq/bifrost/core/providers/databricks"
 	"github.com/maximhq/bifrost/core/providers/deepseek"
@@ -5047,6 +5048,8 @@ func (bifrost *Bifrost) createBaseProvider(providerKey schemas.ModelProvider, co
 		return fireworks.NewFireworksProvider(config, bifrost.logger)
 	case schemas.ClinePass:
 		return cline.NewClineProvider(config, bifrost.logger)
+	case schemas.ClineOAuth:
+		return clineoauth.NewClineOAuthProvider(config, bifrost.logger)
 	case schemas.Sarvam:
 		return sarvam.NewSarvamProvider(config, bifrost.logger)
 	case schemas.Databricks:

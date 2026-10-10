@@ -150,6 +150,7 @@ type Key struct {
 	SGLKeyConfig           *SGLKeyConfig           `json:"sgl_key_config,omitempty"`            // SGLang-specific key configuration
 	DatabricksKeyConfig    *DatabricksKeyConfig    `json:"databricks_key_config,omitempty"`     // Databricks-specific key configuration
 	GithubCopilotKeyConfig *GithubCopilotKeyConfig `json:"github_copilot_key_config,omitempty"` // GitHub Copilot-specific key configuration
+	ClineOAuthKeyConfig    *ClineOAuthKeyConfig    `json:"cline_oauth_key_config,omitempty"`    // Cline OAuth-specific key configuration
 	Enabled                *bool                   `json:"enabled,omitempty"`                   // Whether the key is active (default:true)
 	UseForBatchAPI         *bool                   `json:"use_for_batch_api,omitempty"`         // Whether this key can be used for batch API operations (default:false for new keys, migrated keys default to true)
 	UseAnthropicEndpoints  *bool                   `json:"use_anthropic_endpoints,omitempty"`   // Whether to use anthropic endpoints for this key
@@ -1013,6 +1014,15 @@ type GithubCopilotKeyConfig struct {
 	RepositoryID   SecretVar `json:"repository_id"`           // Repository the installation token is scoped to; digits only (required)
 	PrivateKey     SecretVar `json:"private_key"`             // GitHub App private key, PKCS#1 or PKCS#8 PEM (required)
 	GithubDomain   SecretVar `json:"github_domain,omitempty"` // GitHub Enterprise domain, e.g. "acme.ghe.com". Empty means github.com.
+}
+
+// ClineOAuthKeyConfig holds Cline account OAuth tokens for the cline-oauth provider.
+// Paste the access and refresh tokens from a completed Cline browser sign-in.
+// Bifrost sends the access token as the Bearer credential and refreshes it via
+// POST /api/v1/auth/refresh when near expiry.
+type ClineOAuthKeyConfig struct {
+	AccessToken  SecretVar `json:"access_token"`  // Cline account access token from browser sign-in (required)
+	RefreshToken SecretVar `json:"refresh_token"` // Cline refresh token for access token renewal (required)
 }
 
 // Account defines the interface for managing provider accounts and their configurations.
